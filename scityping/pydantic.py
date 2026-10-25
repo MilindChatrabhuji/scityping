@@ -8,7 +8,7 @@ Provides:
   `pydantic.dataclasses.dataclass`, which by default uses the scityping JSON
   encoder provided by this package.
 """
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Any, Type, ClassVar
 from functools import partial
 from dataclasses import is_dataclass
 from importlib.metadata import version
@@ -76,10 +76,22 @@ if not hasattr(FieldInfo, 'outer_type_'):
 if not hasattr(FieldInfo, 'name'):
     FieldInfo.name = property(lambda self: self.alias or '')
 
+def _display_type_str(val):
+    T = getattr(val, 'annotation', getattr(val, 'type_', None))
+    if hasattr(T, '__qualname__'):
+        return T.__qualname__
+    if hasattr(T, '__name__'):
+        return T.__name__
+    return str(T).replace('typing.', '')
+
+FieldInfo._type_display = _display_type_str
+
 class FieldAdapter:
     def __init__(self, name, field_info):
         self._name = name
         self._field_info = field_info
+    def _type_display(self):
+        return _display_type_str(self)
     @property
     def name(self):
         return self._name
@@ -103,6 +115,13 @@ class FieldAdapter:
     def __repr__(self):
         return f'<FieldAdapter {self._name}: {self.type_}>'
 
+import json
+
+class ConfigShim:
+    json_dumps = staticmethod(json.dumps)
+    json_loads = staticmethod(json.loads)
+    json_encoders = {}
+
 class ModelMetaclass(PydanticModelMetaclass):
     """
     Use this as the metaclass for BaseModel types, to allow them
@@ -113,18 +132,37 @@ class ModelMetaclass(PydanticModelMetaclass):
     def __fields__(cls):
         return {name: FieldAdapter(name, fld) for name, fld in cls.model_fields.items()}
 
+    @property
+    def __config__(cls):
+        return ConfigShim
+
     def __new__(mcs, name, bases, namespace, **kwargs):
-        ann = namespace.get("__annotations__", {})
+        namespace.setdefault('__module__', 'scityping')
+        namespace.setdefault('__qualname__', name)
+        ann = namespace.setdefault('__annotations__', {})
+        for k, v in list(namespace.items()):
+            if not k.startswith('__') and k not in ann:
+                if isinstance(v, type) or callable(v) or k == 'Config':
+                    ann[k] = ClassVar[Any]
         for field, T in ann.items():
             _register_dataclass_core_schema(T)
-        return super().__new__(mcs, name, bases, namespace, **kwargs)
+        cls = super().__new__(mcs, name, bases, namespace, **kwargs)
+        if hasattr(cls, '_setup_result_type'):
+            cls._setup_result_type()
+        return cls
 
 class BaseModel(PydanticBaseModel, metaclass=ModelMetaclass):
     model_config = ConfigDict(arbitrary_types_allowed=True)
+    __custom_root_type__: ClassVar[bool] = False
+    __json_encoder__: ClassVar[Any] = staticmethod(scityping_encoder)
 
     @property
     def __fields__(self):
         return {name: FieldAdapter(name, fld) for name, fld in self.__class__.model_fields.items()}
+
+    @property
+    def __config__(self):
+        return ConfigShim
 
     @model_validator(mode='before')
     @classmethod
@@ -141,6 +179,7 @@ class BaseModel(PydanticBaseModel, metaclass=ModelMetaclass):
         return self.model_dump(*args, **kwargs)
 
     def json(self, *args, **kwargs):
+        kwargs.pop('encoder', None)
         return self.model_dump_json(*args, **kwargs)
 
     @classmethod
@@ -150,6 +189,10 @@ class BaseModel(PydanticBaseModel, metaclass=ModelMetaclass):
     @classmethod
     def parse_obj(cls, obj, *args, **kwargs):
         return cls.model_validate(obj, *args, **kwargs)
+
+    @classmethod
+    def update_forward_refs(cls, **kwargs):
+        return cls.model_rebuild(_types_namespace=kwargs if kwargs else None)
 
 class GenericModel(BaseModel):
     pass
@@ -188,6 +231,10 @@ def dataclass(_cls=None, **kwargs):
         return partial(dataclass, **kwargs)
 
     ## Primary code path: decorator without arguments ##
-    dclass = pydantic_dataclass(_cls, **kwargs)
+    valid_pydantic_kwargs = {
+        k: v for k, v in kwargs.items()
+        if k in ('init', 'repr', 'eq', 'order', 'unsafe_hash', 'frozen', 'config', 'validate_on_init', 'kw_only')
+    }
+    dclass = pydantic_dataclass(_cls, **valid_pydantic_kwargs)
     _register_dataclass_core_schema(dclass)
     return dclass

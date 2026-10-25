@@ -327,9 +327,8 @@ class Type(typing.Type[T], Serializable):  # NB: Serializable must come 2nd
             return T
             
     @classmethod
-    def __modify_schema__(cls, field_schema):
-        field_schema.update(type='array',
-                            items=[{'type': 'string'}]*3)
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        return {'type': 'array', 'items': [{'type': 'string'}] * 3}
 
 
 class GenericType(Type):
