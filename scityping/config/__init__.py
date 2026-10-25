@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import ClassVar, Union
-from pydantic import Field
+from pydantic import Field, validator
 from valconfig import ValConfig
 
 # These are added to the namespace when deserializing a function
@@ -66,7 +66,7 @@ class Config(ValConfig):
     singleton instance – which is why we reuse `config` for `annex_files`.
 
     """
-    __default_config_path__: ClassVar=Path(__file__).parent/"defaults.toml"
+    __default_config_path__: ClassVar=Path(__file__).parent/"defaults.cfg"
 
     trust_all_inputs: bool=False
     safe_packages: set={"__main__", "scityping"}
