@@ -23,6 +23,8 @@ except ModuleNotFoundError:
     StrictInt, StrictFloat = int, float
 
 import numpy as np
+if tuple(int(x) for x in np.__version__.split('.')[:2] if x.isdigit()) >= (2, 0):
+    np.set_printoptions(legacy='1.25')
 
 import io
 # import blosc
@@ -229,7 +231,7 @@ class _NPValueType(Serializable, np.generic):
             and np.issubdtype(type(value), cls.nptype)):
             return value
         elif (isinstance(value, str)
-              or np.can_cast(value, cls.nptype)
+              or np.can_cast(np.min_scalar_type(value) if isinstance(value, (int, float, complex, bool)) else value, cls.nptype)
               or np.issubdtype(getattr(value, 'dtype', np.dtype('O')), np.dtype(str))):
             # Exception for strings, as stated above
             nptype = infer_numpy_type_to_cast(cls.nptype, value)

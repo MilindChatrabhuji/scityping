@@ -115,11 +115,25 @@ def json_like(value: Any, type_str: Union[str,List[str]],
 # Recursive reduction
 
 def deep_reduce(v, **kwargs):
-    from .functions import serialize_function  # HACK !! We should put this in utils or something, or better – avoid the need to special case Callables at all
-    return (v.deep_reduce(v, **kwargs) if isinstance(v, Serializable)
-            else Dataclass.deep_reduce(v, **kwargs) if (is_dataclass(v) and not isinstance(v, type))
-            else serialize_function(v) if isinstance(v, FunctionType)  # Only serialize plain functions – not callable classes, methods, lambdas, etc.
-            else v)
+    from .functions import serialize_function
+    if isinstance(v, type):
+        from .base_types import Type
+        return Type.deep_reduce(v, **kwargs)
+    elif isinstance(v, ABCSerializable):
+        if hasattr(v, 'deep_reduce'):
+            return v.deep_reduce(v, **kwargs)
+        else:
+            return Serializable.deep_reduce(v, **kwargs)
+    elif is_dataclass(v):
+        return Dataclass.deep_reduce(v, **kwargs)
+    elif isinstance(v, Callable_) and not isinstance(v, type):
+        return serialize_function(v)
+    elif isinstance(v, (list, tuple)):
+        return type(v)(deep_reduce(x, **kwargs) for x in v)
+    elif isinstance(v, dict):
+        return {k: deep_reduce(x, **kwargs) for k, x in v.items()}
+    else:
+        return v
 
 # ###############
 # Base class for custom serializable types
@@ -235,7 +249,7 @@ class Serializable:
         ## Create a default Data container if a) it is missing, and b) it is possible ##
         if Data_is_from_parent and cls.Data is not Dataclass.Data:  # Dataclass is a type we use for Data containers; it has special support to allow being used as a Data type
 
-            if isinstance(cls, BaseModel):
+            if isinstance(cls, type) and issubclass(cls, BaseModel):
                 # `cls` is already a Pydantic BaseModel, so it can be its own container
                 # => We still need an `encode` method, but it doesn’t need to do anything
                 # NB: We must not subclass `cls`, because in some places we check for `isinstance(obj, cls.Data)`
@@ -264,15 +278,16 @@ class Serializable:
                            "is recommended.\n"
                            "Automatically Data expected these fields:\n{expected_fields}\n"
                            "which we tried to retrieve from this object:\n{obj}.")
-                if isinstance(cls.Data, BaseModel):
+                if isinstance(cls.Data, type) and issubclass(cls.Data, BaseModel):
                     class Data(cls.Data):
                         __annotations__ = annotations
                         @classmethod
                         def encode(datacls, obj:cls):
+                            fields_list = list(getattr(datacls, "model_fields", getattr(datacls, "__fields__", {})))
                             try:
-                                return datacls(**{attr:getattr(obj, attr) for attr in datacls.__fields__})
+                                return datacls(**{attr:getattr(obj, attr) for attr in fields_list})
                             except Exception as e:
-                                raise RuntimeError(err_msg.format(expected_fields=list(datacls.__fields__),
+                                raise RuntimeError(err_msg.format(expected_fields=fields_list,
                                                                   obj=obj))
 
 
@@ -379,6 +394,34 @@ class Serializable:
     def __get_validators__(cls):
         yield cls.validate
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        def validator_wrapper(val):
+            try:
+                return cls.validate(val)
+            except (TypeError, ValueError) as e:
+                raise ValueError(str(e))
+        if is_dataclass(cls) or (isinstance(cls, type) and issubclass(cls, BaseModel)):
+            schema = handler(source_type)
+            return core_schema.no_info_before_validator_function(
+                lambda val: validator_wrapper(val) if json_like(val, cls._registry) else val,
+                schema,
+                serialization=core_schema.plain_serializer_function_ser_schema(
+                    cls.deep_reduce,
+                    info_arg=False,
+                    return_schema=core_schema.any_schema()
+                )
+            )
+        return core_schema.no_info_plain_validator_function(
+            validator_wrapper,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls.deep_reduce,
+                info_arg=False,
+                return_schema=core_schema.any_schema()
+            )
+        )
+
     def __reduce__(self):  # Pickle serialization hook
         return (self.validate, (self.deep_reduce(self),))
 
@@ -479,9 +522,9 @@ class Serializable:
                 if is_dataclass(value) and not isinstance(value, type):
                     # Make a shallow copy of the fields (`dataclasses.asdict` copies everything, and recurses into dataclasses, dicts, lists and tuples)
                     kwds = {field.name: getattr(value, field.name) for field in fields(value)}
-                elif hasattr(value, "__fields__"):
+                elif hasattr(value, "model_fields") or hasattr(value, "__fields__"):
                     # Assume a Pydantic BaseModel
-                    kwds = dict(value)
+                    kwds = value.model_dump() if hasattr(value, "model_dump") else dict(value)
                 elif hasattr(value, "items"):
                     kwds = dict(value.items())
                 else:
@@ -705,6 +748,8 @@ class Serialized(tuple, metaclass=SerializedMeta):
         if isinstance(value[1], targetT.Data):
             # Nothing to do
             return cls(value)
+        elif hasattr(targetT.Data, "model_validate"):
+            return cls((value[0], targetT.Data.model_validate(value[1])))
         elif hasattr(targetT.Data, "validate"):
             return cls((value[0], targetT.Data.validate(value[1])))
         elif hasattr(targetT.Data, "__get_validators__"):
@@ -963,7 +1008,8 @@ def validate_dataclass_field(val, T: type):
     # Could we do better ?
     elif is_dataclass(T):
         validate = (getattr(T, "validate", None)
-                    or getattr(T, "__validate__", None)  # Used by pydantic.dataclass & scityping.pydantic.dataclass
+                    or getattr(T, "__validate__", None)
+                    or getattr(T, "__pydantic_validator__", None)
                     or Dataclass.validate)
         return validate(val)
     elif T is StrictStr:

@@ -5,7 +5,7 @@ from .base import ABCSerializable, Serializable, Dataclass
 from .functions import serialize_function
 
 try:
-    from pydantic.main import ValidationError
+    from pydantic import ValidationError
 except ModuleNotFoundError:
     # If pydantic can’t be imported, it is fine to create a dummy class which
     # will never match
@@ -42,7 +42,7 @@ def scityping_encoder(obj: Any, base_encoder=None) -> Any:
             # the exception so that its __name__ is actually __qualname__.
             # This monkey patching isn't especially clean, but it should be
             # innocuous: after all, we've already aborted code execution.
-            if e.model.__name__ == "Data":
+            if hasattr(e, "model") and getattr(e.model, "__name__", "") == "Data":
                 e.model.__name__ = e.model.__qualname__
             raise e
     elif is_dataclass(obj) and not isinstance(obj, type):

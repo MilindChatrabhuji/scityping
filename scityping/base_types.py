@@ -94,6 +94,10 @@ class NoneType:
     def __get_validators__(cls):
         yield cls.validate
     @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_plain_validator_function(cls.validate)
+    @classmethod
     def validate(cls, v, field=None):
         if field is None:
             field = SimpleNamespace(name="")
@@ -183,6 +187,10 @@ class Number(numbers.Number):
     def __get_validators__(cls):
         yield cls.validate
     @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_plain_validator_function(cls.validate)
+    @classmethod
     def validate(cls, value, field=None):
         if field is None:
             field = SimpleNamespace(name="")
@@ -202,6 +210,10 @@ class Integral(numbers.Integral):
     @classmethod
     def __get_validators__(cls):
         yield cls.validate
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_plain_validator_function(cls.validate)
     @classmethod
     def validate(cls, value, field=None):
         if field is None:
@@ -223,6 +235,10 @@ class Real(numbers.Real):
     @classmethod
     def __get_validators__(cls):
         yield cls.validate
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_plain_validator_function(cls.validate)
     @classmethod
     def validate(cls, value, field=None):
         if field is None:
@@ -343,22 +359,14 @@ class GenericType(Type):
 
 class PydanticGenericType(GenericType):
     class Data(GenericType.Data):
-        def encode(T: pydantic.main.ModelMetaclass) -> PydanticGenericType.Data:
-            # Get the base Generic type and type arguments
-            #   E.g. For `Foo[int]`, retrieve `Foo` and `(int,)`
-            # NB: In contrast to normal generic types, Pydantic Generics don't have
-            #   __origin__ or __args__ attributes. But Pydantic maintains a cache
-            #   of instantiated generics, to avoid re-instantiating them; this
-            #   cache is keyed by the base generic type, and the argument types
+        def encode(T) -> PydanticGenericType.Data:
+            meta = getattr(T, "__pydantic_generic_metadata__", None)
+            if meta and meta.get("origin"):
+                return (meta["origin"], meta["args"])
             try:
+                import pydantic.generics
                 genT, paramT = next(k for k, v in pydantic.generics._generic_types_cache.items()
                                     if v is T)
-            except StopIteration:
-                # The cache is updated as soon as a concrete generic type is first created,
-                # i.e. the first time `Foo[int]` appears.
-                # The only way it should happen that T is not in the cache, is if
-                # T is a pure generic type. In this case, the normal Type serializer
-                # works fine.
+                return (genT, paramT)
+            except (AttributeError, StopIteration, ModuleNotFoundError):
                 return Type.Data.encode(T)
-            
-            return (genT, paramT)

@@ -54,6 +54,10 @@ class TorchModule(nn.Module):
     def __get_validators__(cls):
         yield cls.validate
     @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_plain_validator_function(cls.validate)
+    @classmethod
     def validate(cls, v):
         if not isinstance(v, nn.Module):
             raise TypeError("Expected a torch.nn.Module; received "

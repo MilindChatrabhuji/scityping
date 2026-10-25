@@ -4,7 +4,7 @@ These are tests for that functionality.
 """
 from dataclasses import dataclass
 from typing import ClassVar
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from scityping import Serializable, Range
 
 def test_autocontainer_plain():
@@ -74,7 +74,8 @@ def test_autocontainer_pydantic():
         c: dict[str, str]
         d: Range
     class Bar(Foo):
-        @validator('b')
+        @field_validator('b')
+        @classmethod
         def make_upper(cls, v):
             return v.upper()
     foo = Foo(a=3, b="beta", c={"name": "Nemo"}, d=range(4, 8))

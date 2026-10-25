@@ -52,7 +52,7 @@ class _AnnexData(SerializedData):
                 ).hexdigest()
         annex_name = cls.get_annex_name(digest)
         config._annex_files.append(annex_name)
-        os.rename(path, config.annex_directory/annex_name)
+        os.replace(path, config.annex_directory/annex_name)
         
         summary = str(da) if config.include_summaries else ""
         return cls(summary, digest)
@@ -119,7 +119,7 @@ class _InlineData(SerializedData):
         encoder = encoders[encoding]
         # Convert array to bytes
         try:
-            v_bytes = xrobj.to_netcdf()
+            v_bytes = xrobj.to_netcdf(engine="scipy")
         except ValueError as e:
             raise ValueError(
                 f"Unable to perform an in-memory serialization of an xarray {cls.clsname}. "
@@ -197,7 +197,7 @@ class Dataset(Serializable, xr.Dataset):
         For an xarray, this may involve unnecessarily writing and reading to disk;
         we avoid this by providing this function.
         """
-        return cls(ds, coords=ds.coords, attrs=ds.attrs)
+        return cls(ds.data_vars, coords=ds.coords, attrs=ds.attrs)
 
     class Data(SerializedData):
         data: Union[AnnexDatasetData,InlineDatasetData]
