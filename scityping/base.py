@@ -903,7 +903,7 @@ def validate_dataclass_field(val, T: type):
         for subT in T.__args__:
             try:
                 return validate_dataclass_field(val, subT)
-            except TypeError as e:
+            except (TypeError, ValueError) as e:
                 err_msgs.append(str(e))
         else:
             # None of the types succeeded in deserializing: raise error, with all concatenated messages
@@ -1008,10 +1008,19 @@ def validate_dataclass_field(val, T: type):
     # Could we do better ?
     elif is_dataclass(T):
         validate = (getattr(T, "validate", None)
-                    or getattr(T, "__validate__", None)
-                    or getattr(T, "__pydantic_validator__", None)
-                    or Dataclass.validate)
-        return validate(val)
+                    or getattr(T, "__validate__", None))
+        if validate is not None and callable(validate):
+            return validate(val)
+        pv = getattr(T, "__pydantic_validator__", None)
+        if pv is not None:
+            if callable(pv):
+                return pv(val)
+            elif hasattr(pv, "validate_python"):
+                try:
+                    return pv.validate_python(val)
+                except Exception as e:
+                    raise TypeError(str(e)) from e
+        return Dataclass.validate(val)
     elif T is StrictStr:
         if not isinstance(val, str): raise TypeError(f"{val} is not a string")
         return val

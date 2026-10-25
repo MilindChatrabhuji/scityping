@@ -12,8 +12,22 @@ except ModuleNotFoundError:
     class ValidationError(RuntimeError):
         pass
 
+try:
+    from pydantic.v1.json import pydantic_encoder
+except ImportError:
+    try:
+        from pydantic.json import pydantic_encoder
+    except ImportError:
+        def pydantic_encoder(obj):
+            if isinstance(obj, (bytes, bytearray)):
+                return obj.decode('utf-8', errors='surrogateescape')
+            if hasattr(obj, '__fspath__'):
+                return str(obj)
+            raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
 # Based on pydantic.json.custom_pydantic_encoder
 def scityping_encoder(obj: Any, base_encoder=None) -> Any:
+    base_encoder = base_encoder or pydantic_encoder
     """
     This function can be used as the `default` argument to `json.dump`, to
     add support for `Serializable` types.

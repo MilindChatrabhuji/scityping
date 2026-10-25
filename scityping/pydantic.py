@@ -21,12 +21,18 @@ from pydantic import (BaseModel as PydanticBaseModel,
 def _coerce_int(val, tp):
     if tp is int and isinstance(val, float):
         return int(val)
+    if tp is float and isinstance(val, int) and not isinstance(val, bool):
+        return float(val)
     origin = get_origin(tp)
     args = get_args(tp)
     if origin in (list, tuple) and isinstance(val, (list, tuple)):
         if args:
             sub_t = args[0]
             return type(val)(_coerce_int(item, sub_t) for item in val)
+    if (origin is not None and ('Union' in str(origin) or type(tp).__name__ == 'UnionType')) or type(tp).__name__ == 'UnionType':
+        if isinstance(val, int) and not isinstance(val, bool):
+            if int not in args and float in args:
+                return float(val)
     return val
 from pydantic._internal._model_construction import ModelMetaclass as PydanticModelMetaclass
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -179,8 +185,12 @@ class BaseModel(PydanticBaseModel, metaclass=ModelMetaclass):
         return self.model_dump(*args, **kwargs)
 
     def json(self, *args, **kwargs):
-        kwargs.pop('encoder', None)
-        return self.model_dump_json(*args, **kwargs)
+        import json
+        encoder = kwargs.pop('encoder', None) or getattr(self, '__json_encoder__', None)
+        cfg = getattr(self, '__config__', None)
+        dumps = getattr(cfg, 'json_dumps', json.dumps)
+        kwargs.pop('indent', None)
+        return dumps(self.dict(*args, **kwargs), default=encoder)
 
     @classmethod
     def parse_raw(cls, b, *args, **kwargs):
@@ -233,8 +243,10 @@ def dataclass(_cls=None, **kwargs):
     ## Primary code path: decorator without arguments ##
     valid_pydantic_kwargs = {
         k: v for k, v in kwargs.items()
-        if k in ('init', 'repr', 'eq', 'order', 'unsafe_hash', 'frozen', 'config', 'validate_on_init', 'kw_only')
+        if k in ('repr', 'eq', 'order', 'unsafe_hash', 'frozen', 'config', 'kw_only')
     }
+    if kwargs.get('init') is False:
+        valid_pydantic_kwargs['init'] = False
     dclass = pydantic_dataclass(_cls, **valid_pydantic_kwargs)
     _register_dataclass_core_schema(dclass)
     return dclass
