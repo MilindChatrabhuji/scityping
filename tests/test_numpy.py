@@ -4,7 +4,7 @@ import pytest
 
 import numpy as np
 import pint
-from pydantic import validator
+from pydantic import model_validator
 from pydantic import ValidationError
 from scityping.pydantic import BaseModel, dataclass
 
@@ -73,15 +73,15 @@ def test_numpy(caplog):
     class Model3(Model):
         a: NPValue[float]  = 0.3
         β: NPValue[float] = None
-        @validator('β', pre=True, always=True)
-        def set_β(cls, v, values):
-            a, dt = (values.get(x, None) for x in ('a', 'dt'))
-            # This test is important, because if `a` or `dt` are missing
-            # (as when we assign to `m4_fail` below) or trigger a validation
-            # error, they will be missing from `values` and raise KeyError here,
-            # (See https://pydantic-docs.helpmanual.io/usage/validators)
-            if all((a, dt)):
-                return a*dt
+        @model_validator(mode='before')
+        @classmethod
+        def set_β(cls, values):
+            if isinstance(values, dict):
+                a = values.get('a', 0.3)
+                dt = values.get('dt', None)
+                if all((a, dt)):
+                    values['β'] = a*dt
+            return values
         def integrate(self, x0, T, y0=0):
             x = x0; y=y0
             β = self.β; dt = self.dt
@@ -95,11 +95,16 @@ def test_numpy(caplog):
         b: NPValue[np.float32]
         w: Array[np.float32] = (np.float32(1), np.float32(0.2))
         γ: Array[np.float32] = None
-        @validator('γ', pre=True, always=True)
-        def set_γ(cls, v, values):
-            a, b, β = (values.get(x, None) for x in ('a', 'b', 'β'))
-            if all((a, b, β)):
-                return β * np.array([1, b/a], dtype='float32')
+        @model_validator(mode='before')
+        @classmethod
+        def set_γ(cls, values):
+            if isinstance(values, dict):
+                a = values.get('a', 0.3)
+                b = values.get('b', None)
+                β = values.get('β', None)
+                if all((a, b, β)):
+                    values['γ'] = β * np.array([1, b/a], dtype='float32')
+            return values
         def integrate(self, x0, T, y0=0):
             x = w*x0; y = w*y0
             γ = self.γ; dt = self.dt

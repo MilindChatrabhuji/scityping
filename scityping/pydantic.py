@@ -65,12 +65,54 @@ def _register_dataclass_core_schema(T):
                 pass
     for arg in getattr(T, "__args__", ()) or ():
         _register_dataclass_core_schema(arg)
+from pydantic.fields import FieldInfo
+
+if not hasattr(FieldInfo, 'required'):
+    FieldInfo.required = property(lambda self: self.is_required() if callable(getattr(self, 'is_required', None)) else True)
+if not hasattr(FieldInfo, 'type_'):
+    FieldInfo.type_ = property(lambda self: self.annotation)
+if not hasattr(FieldInfo, 'outer_type_'):
+    FieldInfo.outer_type_ = property(lambda self: self.annotation)
+if not hasattr(FieldInfo, 'name'):
+    FieldInfo.name = property(lambda self: self.alias or '')
+
+class FieldAdapter:
+    def __init__(self, name, field_info):
+        self._name = name
+        self._field_info = field_info
+    @property
+    def name(self):
+        return self._name
+    @property
+    def alias(self):
+        return self._field_info.alias or self._name
+    @property
+    def required(self):
+        return self._field_info.is_required() if callable(getattr(self._field_info, 'is_required', None)) else True
+    @property
+    def type_(self):
+        return self._field_info.annotation
+    @property
+    def outer_type_(self):
+        return self._field_info.annotation
+    @property
+    def default(self):
+        return self._field_info.default
+    def __getattr__(self, attr):
+        return getattr(self._field_info, attr)
+    def __repr__(self):
+        return f'<FieldAdapter {self._name}: {self.type_}>'
+
 class ModelMetaclass(PydanticModelMetaclass):
     """
     Use this as the metaclass for BaseModel types, to allow them
     1. to find serializers defined in Serializable;
     2. to allow their subclasses to override root validators.
     """
+    @property
+    def __fields__(cls):
+        return {name: FieldAdapter(name, fld) for name, fld in cls.model_fields.items()}
+
     def __new__(mcs, name, bases, namespace, **kwargs):
         ann = namespace.get("__annotations__", {})
         for field, T in ann.items():
@@ -79,6 +121,10 @@ class ModelMetaclass(PydanticModelMetaclass):
 
 class BaseModel(PydanticBaseModel, metaclass=ModelMetaclass):
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @property
+    def __fields__(self):
+        return {name: FieldAdapter(name, fld) for name, fld in self.__class__.model_fields.items()}
 
     @model_validator(mode='before')
     @classmethod
